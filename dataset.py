@@ -16,5 +16,3 @@ class BdzDataset(Dataset):
         x = self.X[idx]
         y = self.y[idx]
         return x, y
-
-

@@ -2,3 +2,6 @@ venv
 .ipynb_checkpoints
 .idea
 lightning_logs
+GD
+data
+images

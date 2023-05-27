@@ -1,71 +1,59 @@
-from collections.abc import Collection
-from dataclasses import dataclass, field
-from typing import List
-
 import torch
-from torch.optim.optimizer import Optimizer, required
 
 
-class NAG(Optimizer):
-    def __init__(self, params, lr=required, momentum=0, weight_decay=0):
-        defaults = dict(lr=lr, lr_old=lr, momentum=momentum, weight_decay=weight_decay)
-        super(NAG, self).__init__(params, defaults)
+class OptimizerTemplate:
+    def __init__(self, params, lr):
+        self.params = list(params)
+        self.lr = lr
 
-    @property
-    def supports_memory_efficient_fp16(self):
-        return True
+    def zero_grad(self):
+        for p in self.params:
+            if p.grad is not None:
+                p.grad.detach_()
+                p.grad.zero_()
 
-    @property
-    def supports_flat_params(self):
-        return True
+    @torch.no_grad()
+    def step(self):
+        for p in self.params:
+            if p.grad is None:
+                continue
+            self.update_param(p)
 
-    def step(self, closure=None):
-        """Performs a single optimization step.
+    def update_param(self, p):
+        raise NotImplementedError
 
-        Args:
-            closure (callable, optional): A closure that reevaluates the model
-                and returns the loss.
-        """
-        loss = None
-        if closure is not None:
-            loss = closure()
 
-        for group in self.param_groups:
-            weight_decay = group["weight_decay"]
-            momentum = group["momentum"]
-            lr = group["lr"]
-            lr_old = group.get("lr_old", lr)
-            lr_correct = lr / lr_old if lr_old > 0 else lr
+class Adam(OptimizerTemplate):
+    def __init__(self, params, lr, beta1=0.9, beta2=0.999, eps=1e-8):
+        super().__init__(params, lr)
+        self.beta1 = beta1
+        self.beta2 = beta2
+        self.eps = eps
+        self.param_step = {p: 0 for p in self.params}  # Remembers "t" for each parameter for bias correction
+        self.param_momentum = {p: torch.zeros_like(p.data) for p in self.params}
+        self.param_2nd_momentum = {p: torch.zeros_like(p.data) for p in self.params}
 
-            for p in group["params"]:
-                if p.grad is None:
-                    continue
+    def update_param(self, p):
+        self.param_step[p] += 1
 
-                p_data_fp32 = p.data
-                if p_data_fp32.dtype in {torch.float16, torch.bfloat16}:
-                    p_data_fp32 = p_data_fp32.float()
+        self.param_momentum[p] = (1 - self.beta1) * p.grad + self.beta1 * self.param_momentum[p]
+        self.param_2nd_momentum[p] = (1 - self.beta2) * (p.grad) ** 2 + self.beta2 * self.param_2nd_momentum[p]
 
-                d_p = p.grad.data.float()
-                param_state = self.state[p]
-                if "momentum_buffer" not in param_state:
-                    param_state["momentum_buffer"] = torch.zeros_like(d_p)
-                else:
-                    param_state["momentum_buffer"] = param_state["momentum_buffer"].to(
-                        d_p
-                    )
+        bias_correction_1 = 1 - self.beta1 ** self.param_step[p]
+        bias_correction_2 = 1 - self.beta2 ** self.param_step[p]
 
-                buf = param_state["momentum_buffer"]
+        p_2nd_mom = self.param_2nd_momentum[p] / bias_correction_2
+        p_mom = self.param_momentum[p] / bias_correction_1
+        p_lr = self.lr / (torch.sqrt(p_2nd_mom) + self.eps)
+        p_update = -p_lr * p_mom
 
-                if weight_decay != 0:
-                    p_data_fp32.mul_(1 - lr * weight_decay)
-                p_data_fp32.add_(buf, alpha=momentum * momentum * lr_correct)
-                p_data_fp32.add_(d_p, alpha=-(1 + momentum) * lr)
+        p.add_(p_update)
 
-                buf.mul_(momentum * lr_correct).add_(d_p, alpha=-lr)
 
-                if p.data.dtype in {torch.float16, torch.bfloat16}:
-                    p.data.copy_(p_data_fp32)
+class LM(OptimizerTemplate):
+    def __int__(self, params, lr):
+        super().__init__(params, lr)
+        self.param_step = {p: 0 for p in self.params}
 
-            group["lr_old"] = lr
-
-        return loss
+    def update_param(self, p):
+        raise NotImplementedError

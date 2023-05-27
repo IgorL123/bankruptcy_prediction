@@ -5,7 +5,7 @@ from optimizers import LM
 
 
 class LitMLP(pl.LightningModule):
-    def __init__(self, input_dim, output_dim, lr, nesterov=False,
+    def __init__(self, input_dim, output_dim, lr=0.1, nesterov=False,
                  momentum=0, opt='SGD', hiddens=(50, 40, 30, 20), ax='softplus',
                  reg=None, lmbda=0.001, var_noise=1, where2noise=None):
         super().__init__()
